@@ -1,0 +1,1 @@
+#NPL_contest_script
