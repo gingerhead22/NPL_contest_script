@@ -1,5 +1,3 @@
-import os
-import math
 import numpy as np 
 import pandas as pd 
 import matplotlib.pyplot as plt 
@@ -7,13 +5,16 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.feature_extraction.text import TfidfTransformer, TfidfVectorizer
 from sklearn import svm
 from sklearn.metrics import accuracy_score
 from sklearn.decomposition import TruncatedSVD
 from sklearn.base import BaseEstimator, TransformerMixin
 import xgboost as xgb
-
+from  sklearn.externals import joblib
+from sklearn.linear_model import LogisticRegressionCV
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
 #######################################################################
 #read_file and preparation 
 train_v=pd.read_csv('../input/training_variants')
@@ -74,8 +75,9 @@ def data_explore():
 #data_explore()
 
 ##########################################################################################################
-#modeling
+#modeling 
 
+#interpreting the variation string 
 def variation_filter(vari):
 	
 	def is_num(num):
@@ -105,67 +107,84 @@ train_X["Variation"]=train_X["Variation"].map(lambda x: variation_filter(x))
 test["Variation"]=test["Variation"].map(lambda x: variation_filter(x))
 print "Variation filtered"
 
+def model_build():
+	class col_select(BaseEstimator,TransformerMixin):
+		def __init__(self,key):
+			self.key=key
+		def fit(self,x,y=None):
+			return self
+		def transform(self,x):
+			return x[self.key].apply(str)
 
-class col_select(BaseEstimator,TransformerMixin):
-	def __init__(self,key):
-		self.key=key
-	def fit(self,x,y=None):
-		return self
-	def transform(self,x):
-		return x[self.key].apply(str)
+	text_pipeline=Pipeline([('col',col_select("Text")),
+	                        ('vector',CountVectorizer(ngram_range=(1,2))),
+		                    ('tfidf',TfidfTransformer(use_idf=True,smooth_idf=True)),
+		                    ('tsvd',TruncatedSVD(n_components=60,n_iter=30,random_state=1))
+		                     ])
 
-text_pipeline=Pipeline([('col',col_select("Text")),
-                        ('vector',CountVectorizer(ngram_range=(1,2))),
-	                    ('tfidf',TfidfTransformer(use_idf=True,smooth_idf=True)),
-	                    ('tsvd',TruncatedSVD(n_components=100,n_iter=30,random_state=1))
-	                     ])
+	gene_pipeline=Pipeline([('col',col_select("Gene")),
+		                    #('vector',CountVectorizer(analyzer=u'char',ngram_range=(1,5))),
+		                    ('tfidf',TfidfVectorizer(analyzer='char',ngram_range=(1,5),use_idf=True,smooth_idf=True)),
+		                    ('tsvd',TruncatedSVD(n_components=60,n_iter=30,random_state=1))
+	                         ])
 
-gene_pipeline=Pipeline([('col',col_select("Gene")),
-	                    ('vector',CountVectorizer(analyzer=u'char',ngram_range=(1,6))),
-	                    #('tfidf',TfidfTransformer(use_idf=True,smooth_idf=True)),
-	                    ('tsvd',TruncatedSVD(n_components=100,n_iter=30,random_state=1))
-                         ])
-
-variation_pipeline=Pipeline([('col',col_select("Variation")),
-	                    ('vector',CountVectorizer(analyzer=u'char',ngram_range=(1,6))),
-	                    #('tfidf',TfidfTransformer(use_idf=True,smooth_idf=True)),
-	                    ('tsvd',TruncatedSVD(n_components=100,n_iter=30,random_state=1))
-                         ])
+	variation_pipeline=Pipeline([('col',col_select("Variation")),
+		                    #('vector',CountVectorizer(analyzer=u'char',ngram_range=(1,5))),
+		                    ('tfidf',TfidfVectorizer(analyzer='char',ngram_range=(1,5),use_idf=True,smooth_idf=True)),
+		                    ('tsvd',TruncatedSVD(n_components=60,n_iter=30,random_state=1))
+	                         ])
 
 
-process=Pipeline([
-	('union',FeatureUnion(
-		n_jobs=-1,
-		transformer_list=[("text",text_pipeline),("gene",gene_pipeline),("variation",variation_pipeline)],
-		transformer_weights={'text':1.5,"gene":0.8,'variation':0.8}
-		)
-		)])
+	process=Pipeline([
+		('union',FeatureUnion(
+			n_jobs=-1,
+			transformer_list=[("text",text_pipeline),("gene",gene_pipeline),("variation",variation_pipeline)],
+			#transformer_weights={'text':1.1,"gene":0.9,'variation':0.9}
+			)
+			)])
 
-print "model step1 finished"
-process.fit(train_X)
-from  sklearn.externals import joblib
-joblib.dump(process,'process1')
-print "fitted"
+	print "model step1 finished"
 
-#process=joblib.load('process1')
-#print "bag loaded"
-train_trans=process.transform(train_X)
-print "training data process:",train_trans.shape
-joblib.dump(train_trans,"train_transform")
-print "train_trans saved"
-test_trans=process.transform(test)
-print "test data process:", test_trans.shape
-joblib.dump(test_trans,"test_transform")
-print "test_trans saved"
+
+	process.fit(train_X)
+	print "fitted"
+
+
+	train_trans=process.transform(train_X)
+	print "training data process:",train_trans.shape
+	test_trans=process.transform(test)
+	print "test data process:", test_trans.shape
+
+
+	joblib.dump(process,'process1')
+	joblib.dump(train_trans,"train_transform")
+	print "train_trans saved"
+	joblib.dump(test_trans,"test_transform")
+	print "test_trans saved"
+	return train_trans,test_trans
+
+def model_load():
+	train_trans=joblib.load("train_transform")
+	test_trans=joblib.load("test_transform")
+	return train_trans,test_trans
+
+
+#choose model_build at first time or when you want to refine the model, otherwise choose model_load to save time on fitting and transform 
+train_trans,test_trans=model_load()
+
+
+#####################################################################################################################
+#training
+
 
 def xgboost_prediction():
 	iter=3
 	for i in range(iter):
-		x1,x2,y1,y2=train_test_split(train_trans,train_Y,test_size=0.25,random_state=iter)
+		x1,x2,y1,y2=train_test_split(train_trans,train_Y,test_size=0.15,random_state=iter)
 		validation=[(xgb.DMatrix(x1,y1),'train'),(xgb.DMatrix(x2,y2),'validation')]
-		params={'max_depth':6,'eta':0.03,'silent':1,'num_class':9,'eval_metric':'mlogloss','objective':'multi:softprob','seed':1}
-		num_round=1000
-		model=xgb.train(params,xgb.DMatrix(x1,y1),num_round,validation,verbose_eval=5,early_stopping_rounds=20)
+		params={'max_depth':5,'eta':0.01,'silent':1,'num_class':9,'eval_metric':'mlogloss','objective':'multi:softprob','seed':1}
+		num_round=1500
+		model=xgb.train(params,xgb.DMatrix(x1,y1),num_round,validation,verbose_eval=5,early_stopping_rounds=30)
 		if i==0:
 			test_Y=model.predict(xgb.DMatrix(test_trans),ntree_limit=model.best_ntree_limit)/iter
 		else:
@@ -175,22 +194,22 @@ def xgboost_prediction():
 	submission.to_csv("submission.csv",index=False)
 
 
-from sklearn.linear_model import LogisticRegressionCV
-from sklearn.neural_network import MLPClassifier
-from sklearn.svm import SVC
 
-models=[SVC(kernel='linear',probability=True),
-        MLPClassifier(activation='relu',learning_rate='adaptive',warm_start=True)
-        ]
 
-def prediction(index=0):
+
+
+
+def prediction(k=0):
+	models=[SVC(kernel='linear',probability=True),MLPClassifier(activation='relu',learning_rate='adaptive',warm_start=True)]
+	names=['SVC','MLPC']
 	test_Y=np.zeros((test.shape[0],9))
-	model=models[index]
+	model=models[k]
 	model.fit(train_trans,train_Y)
 	test_Y+=model.predict_proba(test_trans)
 	submission=pd.DataFrame(test_Y,columns=["class"+str(i) for i in range(1,10)])
 	submission["ID"]=ID
-	submission.to_csv("submissionSVC.csv",index=False)
+	name="submission"+names[k]+".csv"
+	submission.to_csv(name,index=False)
 
-#prediction(0)
-xgboost_prediction()
+prediction(1)
+#xgboost_prediction()
