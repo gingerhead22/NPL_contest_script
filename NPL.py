@@ -6,7 +6,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer, TfidfVectorizer
-from sklearn import svm
 from sklearn.metrics import accuracy_score
 from sklearn.decomposition import TruncatedSVD
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -28,8 +27,6 @@ train_X=train.drop('Class',axis=1)
 test=pd.merge(test_v,test_t,how='left',on='ID')
 test["TextLen"]=test["Text"].map(lambda x:str(len(str(x)))+str(len(str(x).split())))
 ID=test["ID"].values
-train_X.head(5)
-test.head(5)
 #########################################################################################################
 #data exploration
 def print_numbers():
@@ -72,7 +69,7 @@ def data_explore():
 	plot_items()
 
 
-#data_explore()
+data_explore()
 
 ##########################################################################################################
 #modeling 
